@@ -1,0 +1,24 @@
+{
+  "OST_PipeCurves": {
+    "default": {
+      "NSIKcodeLK": "PDC",
+      "NSIKtermLK": "Vamzdis",
+      "NcodeLKtID": "",
+      "NtermLKtID": ""
+    }
+  },
+  "OST_MechanicalEquipment": {
+    "Radiator_Steel": {
+      "NSIKcodeLK": "EPA10",
+      "NSIKtermLK": "Plieninis radiatorius",
+      "NcodeLKtID": "",
+      "NtermLKtID": ""
+    },
+    "Heat_Pump_Air_Water": {
+      "NSIKcodeLK": "EGA20",
+      "NSIKtermLK": "Šilumos siurblys „oras-vanduo“",
+      "NcodeLKtID": "",
+      "NtermLKtID": ""
+    }
+  }
+}
