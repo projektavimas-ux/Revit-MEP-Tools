@@ -86,14 +86,9 @@ def auto_tag_mep():
 
     tagged_ids = get_existing_tagged_ids() if duplicate_choice == "Praleisti jau turinčius tagą" else set()
     
-    # Bandoma naudoti 'Model' (lygiagrečiai) jeigu Revit versija tai palaiko, kitaip 'Horizontal'/'Vertical'
-    if orientation == "Lygiagrečiai vamzdžiui/ortakiui":
-        if hasattr(DB.TagOrientation, 'Model'):
-            tag_orient_enum = DB.TagOrientation.Model
-        else:
-            tag_orient_enum = DB.TagOrientation.Horizontal  # Senesnėse versijose fallback'as
-    else:
-        tag_orient_enum = DB.TagOrientation.Horizontal
+    # TagOrientation enum'as API lygmenyje neturi 'Model' pasirinkimo (jis yra tik vartotojo sąsajoje).
+    # Todėl API visada naudojamas Horizontal/Vertical, o lygiagretus posūkis nustatomas per tag.Rotation
+    tag_orient_enum = DB.TagOrientation.Horizontal
     offset_dist = 200 / 304.8 # 200mm atitraukimas (konvertuota į pėdas)
     
     tagged_count = 0
@@ -130,6 +125,26 @@ def auto_tag_mep():
                         tag_orient_enum, 
                         tag_point
                     )
+                    
+                    # Jei vartotojas pasirinko "Lygiagrečiai", pasukame žymą, kad sutaptų su vamzdžio kryptimi
+                    if orientation == "Lygiagrečiai vamzdžiui/ortakiui":
+                        try:
+                            import math
+                            direction = (curve.GetEndPoint(1) - curve.GetEndPoint(0)).Normalize()
+                            angle = math.atan2(direction.Y, direction.X)
+                            
+                            # Jei tekstas gautųsi aukštyn kojom (kampas > 90 arba < -90), apverčiame
+                            if angle > math.pi / 2:
+                                angle -= math.pi
+                            elif angle < -math.pi / 2:
+                                angle += math.pi
+                                
+                            # Sukame tagą (veikia Revit 2022+)
+                            if hasattr(tag, 'Rotation'):
+                                tag.Rotation = angle
+                        except Exception as e:
+                            pass # Jei senesnė versija, pasukimas tiesiog nesuveiks
+                            
                     tagged_count += 1
             except Exception as e:
                 print("Klaida žymint {}: {}".format(elem.Id, str(e)))
