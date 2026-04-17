@@ -86,7 +86,14 @@ def auto_tag_mep():
 
     tagged_ids = get_existing_tagged_ids() if duplicate_choice == "Praleisti jau turinčius tagą" else set()
     
-    tag_orient_enum = DB.TagOrientation.Model if orientation == "Lygiagrečiai vamzdžiui/ortakiui" else DB.TagOrientation.Horizontal
+    # Bandoma naudoti 'Model' (lygiagrečiai) jeigu Revit versija tai palaiko, kitaip 'Horizontal'/'Vertical'
+    if orientation == "Lygiagrečiai vamzdžiui/ortakiui":
+        if hasattr(DB.TagOrientation, 'Model'):
+            tag_orient_enum = DB.TagOrientation.Model
+        else:
+            tag_orient_enum = DB.TagOrientation.Horizontal  # Senesnėse versijose fallback'as
+    else:
+        tag_orient_enum = DB.TagOrientation.Horizontal
     offset_dist = 200 / 304.8 # 200mm atitraukimas (konvertuota į pėdas)
     
     tagged_count = 0
