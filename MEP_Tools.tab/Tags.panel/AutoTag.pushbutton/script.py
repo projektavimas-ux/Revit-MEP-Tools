@@ -42,6 +42,50 @@ def get_element_system_name(elem):
 def auto_tag_mep():
     selected_ids = uidoc.Selection.GetElementIds()
     
+    # --- 0. KATEGORIJŲ PASIRINKIMAS ---
+    cat_map = {
+        "Vamzdžiai (Pipes)": DB.BuiltInCategory.OST_PipeCurves,
+        "Ortakiai (Ducts)": DB.BuiltInCategory.OST_DuctCurves,
+        "Kabelių loviai (Cable Trays)": DB.BuiltInCategory.OST_CableTray,
+        "Įrenginiai (Mechanical Equipment)": DB.BuiltInCategory.OST_MechanicalEquipment
+    }
+    selected_cat_names = forms.SelectFromList.show(
+        list(cat_map.keys()),
+        title="1. Ką norite žymėti? (Pasirinkite vieną ar kelis)",
+        multiselect=True
+    )
+    if not selected_cat_names: return
+    categories = [cat_map[name] for name in selected_cat_names]
+    
+    # --- 0.1 TAGŲ TIPŲ PASIRINKIMAS ---
+    tag_cat_map = {
+        DB.BuiltInCategory.OST_PipeCurves: DB.BuiltInCategory.OST_PipeTags,
+        DB.BuiltInCategory.OST_DuctCurves: DB.BuiltInCategory.OST_DuctTags,
+        DB.BuiltInCategory.OST_CableTray: DB.BuiltInCategory.OST_CableTrayTags,
+        DB.BuiltInCategory.OST_MechanicalEquipment: DB.BuiltInCategory.OST_MechanicalEquipmentTags
+    }
+    
+    tag_types_to_use = {} # elem_category_int -> tag_type_id
+    for cat_name in selected_cat_names:
+        cat_enum = cat_map[cat_name]
+        tag_enum = tag_cat_map.get(cat_enum)
+        if not tag_enum: continue
+        
+        tag_symbols = DB.FilteredElementCollector(doc) \
+                        .OfCategory(tag_enum) \
+                        .OfClass(DB.FamilySymbol) \
+                        .ToElements()
+                        
+        if tag_symbols:
+            options = {"{} - {}".format(s.Family.Name if s.Family else "Tag", s.Name): s.Id for s in tag_symbols}
+            chosen_tag_name = forms.SelectFromList.show(
+                list(options.keys()),
+                title="Pasirinkite Tag tipą: {}".format(cat_name),
+                multiselect=False
+            )
+            if chosen_tag_name:
+                tag_types_to_use[int(cat_enum)] = options[chosen_tag_name]
+
     # --- 1. APIMTIS (Scope) ---
     scope_options = ["Visus matomus vaizde", "Tik dabar pažymėtus"]
     if selected_ids:
@@ -80,12 +124,8 @@ def auto_tag_mep():
 
     # Surenkame elementus
     from System.Collections.Generic import List
-    categories = [
-        DB.BuiltInCategory.OST_PipeCurves,
-        DB.BuiltInCategory.OST_DuctCurves,
-        DB.BuiltInCategory.OST_CableTray,
-        DB.BuiltInCategory.OST_MechanicalEquipment
-    ]
+    
+    # Paverčiame Python sąrašą į .NET C# List, kurio reikalauja Revit API
     cat_list = List[DB.BuiltInCategory](categories)
     filter_categories = DB.ElementMulticategoryFilter(cat_list)
     
@@ -184,6 +224,15 @@ def auto_tag_mep():
                     tag_orient_enum, 
                     tag_point
                 )
+                
+                # Pakeičiame Tago tipą į vartotojo pasirinktą
+                if elem.Category:
+                    cat_int = elem.Category.Id.IntegerValue
+                    if cat_int in tag_types_to_use:
+                        try:
+                            tag.ChangeTypeId(tag_types_to_use[cat_int])
+                        except:
+                            pass
                 
                 if orientation == "Lygiagrečiai vamzdžiui/ortakiui" and direction:
                     try:
