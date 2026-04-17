@@ -130,6 +130,22 @@ def auto_tag_mep():
     )
     if not strategy_choice: return
 
+    # --- 6. ILGIO FILTRAS (Minimum Length) ---
+    min_length_input = forms.ask_for_string(
+        default="0.5",
+        prompt="Įveskite minimalų ilgį metrais (m), nuo kurio žymėti elementus (pvz., 0.5, 1, 2). Trumpesni bus ignoruojami:",
+        title="Minimalus ilgis"
+    )
+    
+    min_length_ft = 0.0
+    if min_length_input:
+        try:
+            # Konvertuojame įvestus metrus į pėdas (Revit API naudoja pėdas)
+            min_length_m = float(min_length_input.replace(',', '.'))
+            min_length_ft = min_length_m * 1000 / 304.8
+        except ValueError:
+            forms.alert("Neteisingas skaičiaus formatas. Bus žymimi visi ilgiai.")
+            
     # Surenkame elementus
     from System.Collections.Generic import List
     
@@ -204,6 +220,11 @@ def auto_tag_mep():
                 
                 if isinstance(location, DB.LocationCurve):
                     curve = location.Curve
+                    
+                    # Filtruojame pagal minimalų ilgį (įrenginiams netaikoma)
+                    if curve.Length < min_length_ft:
+                        continue
+                        
                     midpoint = curve.Evaluate(0.5, True)
                     direction = (curve.GetEndPoint(1) - curve.GetEndPoint(0)).Normalize()
                 elif isinstance(location, DB.LocationPoint):
