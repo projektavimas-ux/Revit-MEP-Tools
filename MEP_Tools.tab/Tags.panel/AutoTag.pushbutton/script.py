@@ -83,7 +83,8 @@ def auto_tag_mep():
     categories = [
         DB.BuiltInCategory.OST_PipeCurves,
         DB.BuiltInCategory.OST_DuctCurves,
-        DB.BuiltInCategory.OST_CableTray
+        DB.BuiltInCategory.OST_CableTray,
+        DB.BuiltInCategory.OST_MechanicalEquipment
     ]
     cat_list = List[DB.BuiltInCategory](categories)
     filter_categories = DB.ElementMulticategoryFilter(cat_list)
@@ -132,6 +133,11 @@ def auto_tag_mep():
                     if length > max_len:
                         max_len = length
                         longest_elem = e
+                elif isinstance(loc, DB.LocationPoint):
+                    # Įrenginiams priskiriame prioritetą, tiesiog imame pirmą
+                    if max_len < 0:
+                        longest_elem = e
+                        max_len = 0
             if longest_elem:
                 smart_elements.append(longest_elem)
         elements_to_process = smart_elements
@@ -144,43 +150,74 @@ def auto_tag_mep():
     with revit.Transaction("Išmanus MEP Taginimas"):
         for elem in elements_to_process:
             try:
-                location_curve = elem.Location
-                if isinstance(location_curve, DB.LocationCurve):
-                    curve = location_curve.Curve
+                location = elem.Location
+                curve = None
+                direction = None
+                
+                if isinstance(location, DB.LocationCurve):
+                    curve = location.Curve
                     midpoint = curve.Evaluate(0.5, True)
+                    direction = (curve.GetEndPoint(1) - curve.GetEndPoint(0)).Normalize()
+                elif isinstance(location, DB.LocationPoint):
+                    midpoint = location.Point
+                    # Įrenginių atveju bandome gauti jų pasukimo kryptį (FacingOrientation)
+                    if hasattr(elem, "FacingOrientation"):
+                        direction = elem.FacingOrientation
+                    else:
+                        direction = DB.XYZ.BasisX
+                else:
+                    continue # Jei neturi nei kreivės nei taško, praleidžiame
                     
-                    tag_point = midpoint
-                    if offset_choice == "Atitraukti į šoną (Offset)":
-                        direction = (curve.GetEndPoint(1) - curve.GetEndPoint(0)).Normalize()
-                        up_vector = DB.XYZ.BasisZ
-                        normal = direction.CrossProduct(up_vector).Normalize()
-                        tag_point = midpoint + normal * offset_dist
+                tag_point = midpoint
+                if offset_choice == "Atitraukti į šoną (Offset)" and direction:
+                    up_vector = DB.XYZ.BasisZ
+                    normal = direction.CrossProduct(up_vector).Normalize()
+                    tag_point = midpoint + normal * offset_dist
 
-                    ref = DB.Reference(elem)
-                    tag = DB.IndependentTag.Create(
-                        doc, 
-                        active_view.Id, 
-                        ref, 
-                        False, 
-                        DB.TagMode.TM_ADDBY_CATEGORY, 
-                        tag_orient_enum, 
-                        tag_point
-                    )
-                    
-                    if orientation == "Lygiagrečiai vamzdžiui/ortakiui":
-                        try:
-                            direction = (curve.GetEndPoint(1) - curve.GetEndPoint(0)).Normalize()
-                            angle = math.atan2(direction.Y, direction.X)
-                            if angle > math.pi / 2:
-                                angle -= math.pi
-                            elif angle < -math.pi / 2:
-                                angle += math.pi
-                            if hasattr(tag, 'Rotation'):
-                                tag.Rotation = angle
-                        except:
-                            pass 
+                ref = DB.Reference(elem)
+                tag = DB.IndependentTag.Create(
+                    doc, 
+                    active_view.Id, 
+                    ref, 
+                    False, 
+                    DB.TagMode.TM_ADDBY_CATEGORY, 
+                    tag_orient_enum, 
+                    tag_point
+                )
+                
+                if orientation == "Lygiagrečiai vamzdžiui/ortakiui" and direction:
+                    try:
+                        # Pasukimo kampo skaičiavimas
+                        angle = math.atan2(direction.Y, direction.X)
+                        if angle > math.pi / 2:
+                            angle -= math.pi
+                        elif angle < -math.pi / 2:
+                            angle += math.pi
                             
-                    tagged_count += 1
+                        # Metodas 1: Priverstinai bandome nustatyti TagOrientation į Model (Enum reikšmė 2 Revit 2022+)
+                        import System
+                        try:
+                            tag.TagOrientation = System.Enum.ToObject(DB.TagOrientation, 2)
+                        except:
+                            pass
+                            
+                        # Metodas 2: Jei versija labai nauja ir tag.Rotation veikia
+                        if hasattr(tag, 'Rotation'):
+                            try:
+                                tag.Rotation = angle
+                            except:
+                                pass
+                                
+                        # Metodas 3: Fiziškai pasukame visą Tag elementą su ElementTransformUtils
+                        try:
+                            axis = DB.Line.CreateBound(tag_point, tag_point + DB.XYZ.BasisZ)
+                            DB.ElementTransformUtils.RotateElement(doc, tag.Id, axis, angle)
+                        except:
+                            pass
+                    except:
+                        pass 
+                        
+                tagged_count += 1
             except Exception as e:
                 pass
 
