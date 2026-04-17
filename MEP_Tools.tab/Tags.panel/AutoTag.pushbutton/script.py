@@ -77,7 +77,15 @@ def auto_tag_mep():
                         .ToElements()
                         
         if tag_symbols:
-            options = {"{} - {}".format(s.Family.Name if s.Family else "Tag", s.Name): s.Id for s in tag_symbols}
+            options = {}
+            for s in tag_symbols:
+                try:
+                    fam_name = s.FamilyName if hasattr(s, 'FamilyName') and s.FamilyName else "Tag"
+                    type_name = s.Name if hasattr(s, 'Name') else "Unknown"
+                    options["{} - {}".format(fam_name, type_name)] = s.Id
+                except Exception:
+                    pass
+
             chosen_tag_name = forms.SelectFromList.show(
                 list(options.keys()),
                 title="Pasirinkite Tag tipą: {}".format(cat_name),
