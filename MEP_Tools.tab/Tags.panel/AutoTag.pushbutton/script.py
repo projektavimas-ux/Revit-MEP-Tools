@@ -55,12 +55,17 @@ def auto_tag_mep():
     if not duplicate_choice: return
 
     # Surenkame elementus
+    from System.Collections.Generic import List
+    
     categories = [
         DB.BuiltInCategory.OST_PipeCurves,
         DB.BuiltInCategory.OST_DuctCurves,
         DB.BuiltInCategory.OST_CableTray
     ]
-    filter_categories = DB.ElementMulticategoryFilter(categories)
+    
+    # Paverčiame Python sąrašą į .NET C# List, kurio reikalauja Revit API
+    cat_list = List[DB.BuiltInCategory](categories)
+    filter_categories = DB.ElementMulticategoryFilter(cat_list)
     
     elements = []
     if scope == "Tik dabar pažymėtus" and selected_ids:
