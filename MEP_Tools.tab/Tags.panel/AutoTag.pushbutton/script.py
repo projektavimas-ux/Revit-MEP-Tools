@@ -47,12 +47,18 @@ def auto_tag_mep():
     )
     if not offset_choice: return
 
-    # --- 4. DUBLIKATAI ---
-    duplicate_choice = forms.CommandSwitchWindow.show(
-        ["Praleisti jau turinčius tagą", "Žymėti visus (ir dubliuoti)"],
-        message="Ką daryti su elementais, kurie JAU turi tagą šiame vaizde?"
+    # --- 5. ILGIO FILTRAS (Minimum Length) ---
+    min_length_choice = forms.CommandSwitchWindow.show(
+        ["Žymėti visus (ir trumpus gabaliukus)", "Tik ilgesnius nei 500 mm", "Tik ilgesnius nei 1000 mm"],
+        message="Vamzdžių / ortakių ilgio filtras (kad išvengtume makalynės):"
     )
-    if not duplicate_choice: return
+    if not min_length_choice: return
+    
+    min_length_ft = 0
+    if "500" in min_length_choice:
+        min_length_ft = 500 / 304.8
+    elif "1000" in min_length_choice:
+        min_length_ft = 1000 / 304.8
 
     # Surenkame elementus
     from System.Collections.Generic import List
@@ -104,6 +110,12 @@ def auto_tag_mep():
                 location_curve = elem.Location
                 if isinstance(location_curve, DB.LocationCurve):
                     curve = location_curve.Curve
+                    
+                    # Ilgio filtras (praleidžiame per trumpus elementus, kad nebūtų "makalynės")
+                    if curve.Length < min_length_ft:
+                        skipped_count += 1
+                        continue
+                        
                     midpoint = curve.Evaluate(0.5, True)
                     
                     tag_point = midpoint
