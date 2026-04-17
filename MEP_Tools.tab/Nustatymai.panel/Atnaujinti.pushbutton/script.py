@@ -8,11 +8,12 @@ import shutil
 from pyrevit import forms
 from pyrevit.loader import sessionmgr
 
-import System
-from System.Net import WebClient, ServicePointManager, SecurityProtocolType
+import clr
+clr.AddReference('System')
+import System.Net
 
 # Priverstinai naudojame TLS 1.2, kad GitHub neblokuotų atsisiuntimo iš senesnio .NET
-ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12
+System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12
 
 # Mūsų repozitorijos master šakos ZIP nuoroda
 URL = "https://github.com/projektavimas-ux/Revit-MEP-Tools/archive/refs/heads/master.zip"
@@ -35,7 +36,7 @@ def update_extension():
     
     try:
         # 1. Atsisiunčiame ZIP naudojant .NET WebClient
-        client = WebClient()
+        client = System.Net.WebClient()
         client.DownloadFile(URL, temp_zip)
         
         # 2. Išvalome seną laikiną aplanką, jei toks liko, ir sukuriame naują
