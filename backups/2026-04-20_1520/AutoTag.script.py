@@ -402,7 +402,7 @@ def auto_tag_mep():
     # --- 0.2 IŠPLĖSTINĖS FUNKCIJOS (4 pasiūlymai) ---
     enhancement_options = [
         "Apsauga nuo tagų susikirtimų",
-        "Vienas tagas grupei (multi-leader; dažn. ortakiai/kabelių loviai, vamzdžiams gali neveikti)",
+        "Vienas tagas grupei (multi-leader, jei palaikoma)",
         "Sąlyginis žymėjimas (sistema/debitas)"
     ]
     chosen_enhancements = forms.SelectFromList.show(
@@ -412,7 +412,7 @@ def auto_tag_mep():
     ) or []
 
     use_collision_avoidance = "Apsauga nuo tagų susikirtimų" in chosen_enhancements
-    use_multi_leader_mode = "Vienas tagas grupei (multi-leader; dažn. ortakiai/kabelių loviai, vamzdžiams gali neveikti)" in chosen_enhancements
+    use_multi_leader_mode = "Vienas tagas grupei (multi-leader, jei palaikoma)" in chosen_enhancements
     use_conditional_filter = "Sąlyginis žymėjimas (sistema/debitas)" in chosen_enhancements
 
     system_filter_text = ""
@@ -438,47 +438,47 @@ def auto_tag_mep():
     scope_options = ["Visus matomus vaizde", "Tik dabar pažymėtus"]
     if selected_ids:
         scope = forms.CommandSwitchWindow.show(
-            scope_options + ["Atšaukti viską"],
+            scope_options,
             message="Ką žymėsime? (Yra pažymėtų elementų: {})".format(len(selected_ids))
         )
     else:
         scope = "Visus matomus vaizde"
-    if not scope or scope == "Atšaukti viską":
+    if not scope:
         return
 
     # --- 2. LYGIUOTĖ (Orientation) ---
     orientation = forms.CommandSwitchWindow.show(
-        ["Lygiagrečiai vamzdžiui/ortakiui", "Horizontaliai lapui", "Atšaukti viską"],
+        ["Lygiagrečiai vamzdžiui/ortakiui", "Horizontaliai lapui"],
         message="Kaip orientuoti tagą?"
     )
-    if not orientation or orientation == "Atšaukti viską":
+    if not orientation:
         return
 
     # --- 3. POSLINKIS (Offset) ---
     offset_choice = forms.CommandSwitchWindow.show(
-        ["Be poslinkio (centre)", "Atitraukti į šoną (Offset)", "Atšaukti viską"],
+        ["Be poslinkio (centre)", "Atitraukti į šoną (Offset)"],
         message="Kur padėti tagą?"
     )
-    if not offset_choice or offset_choice == "Atšaukti viską":
+    if not offset_choice:
         return
 
     # --- 4. DUBLIKATAI ---
     duplicate_choice = forms.CommandSwitchWindow.show(
-        ["Praleisti jau turinčius tagą", "Žymėti visus (ir dubliuoti)", "Atšaukti viską"],
+        ["Praleisti jau turinčius tagą", "Žymėti visus (ir dubliuoti)"],
         message="Ką daryti su elementais, kurie JAU turi tagą šiame vaizde?"
     )
-    if not duplicate_choice or duplicate_choice == "Atšaukti viską":
+    if not duplicate_choice:
         return
 
     # --- 5. STRATEGIJA ---
     strategy_choice = forms.CommandSwitchWindow.show(
-        ["Išmanus: 1 tagas ištisai trasai", "Paprastas: žymėti visus segmentus", "Atšaukti viską"],
+        ["Išmanus: 1 tagas ištisai trasai", "Paprastas: žymėti visus segmentus"],
         message=(
             "Išmanus rėžimas sugrupuoja tos pačios sistemos ir to paties dydžio "
             "vamzdžius ir uždeda tik 1 tagą ant ilgiausios atkarpos."
         )
     )
-    if not strategy_choice or strategy_choice == "Atšaukti viską":
+    if not strategy_choice:
         return
 
     # --- 6. ILGIO FILTRAS (Minimum Length) ---
@@ -752,6 +752,12 @@ def auto_tag_mep():
 
     if warnings:
         summary_lines.append("Įspėjimų: {}".format(len(warnings)))
+
+    if use_multi_leader_mode:
+        summary_lines.append(
+            "Pastaba: 'Vienas tagas grupei' dažniausiai veikia ortakiams, kabelių loviams ir daliai įrenginių; "
+            "vamzdžiams Revit API dažnai nepalaiko pilno AddReference scenarijaus."
+        )
 
     forms.alert("\n".join(summary_lines))
 
