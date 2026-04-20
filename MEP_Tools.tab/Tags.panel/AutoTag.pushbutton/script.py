@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Išmanus MEP elementų žymėjimas (AutoTag) su opcijomis."""
-from pyrevit import revit, DB, UI, forms
+"""Išmanus MEP elementų žymėjimas (AutoTag) su išplėstinėmis opcijomis."""
+from pyrevit import revit, DB, forms
 import math
+import re
+
 
 doc = revit.doc
 uidoc = revit.uidoc
 active_view = doc.ActiveView
+
 
 def get_existing_tagged_ids():
     """Surenka visų šiame vaizde jau sužymėtų elementų ID."""
@@ -14,34 +17,295 @@ def get_existing_tagged_ids():
                       .ToElements()
     tagged_ids = set()
     for tag in existing_tags:
-        if hasattr(tag, 'GetTaggedLocalElementIds'):
-            for el_id in tag.GetTaggedLocalElementIds():
-                tagged_ids.add(el_id.IntegerValue)
-        elif hasattr(tag, 'TaggedLocalElementId'):
-            tagged_ids.add(tag.TaggedLocalElementId.IntegerValue)
+        try:
+            if hasattr(tag, 'GetTaggedLocalElementIds'):
+                for el_id in tag.GetTaggedLocalElementIds():
+                    tagged_ids.add(el_id.IntegerValue)
+            elif hasattr(tag, 'TaggedLocalElementId'):
+                tagged_ids.add(tag.TaggedLocalElementId.IntegerValue)
+        except Exception:
+            pass
     return tagged_ids
+
+
+def get_existing_tag_head_points():
+    """Surenka esamų tagų galvučių pozicijas susikirtimų prevencijai."""
+    pts = []
+    tags = DB.FilteredElementCollector(doc, active_view.Id).OfClass(DB.IndependentTag).ToElements()
+    for tag in tags:
+        try:
+            if hasattr(tag, 'TagHeadPosition'):
+                p = tag.TagHeadPosition
+                if p:
+                    pts.append(p)
+        except Exception:
+            pass
+    return pts
+
+
+def point_distance_xy(p1, p2):
+    dx = p1.X - p2.X
+    dy = p1.Y - p2.Y
+    return math.sqrt(dx * dx + dy * dy)
+
+
+def choose_non_overlapping_point(base_point, direction, existing_points, step_ft, min_dist_ft, max_tries):
+    """Parenka artimą, bet nesikertančią tag poziciją."""
+    candidate = base_point
+
+    if direction:
+        up = DB.XYZ.BasisZ
+        normal = direction.CrossProduct(up)
+        try:
+            normal = normal.Normalize()
+        except Exception:
+            normal = DB.XYZ.BasisY
+    else:
+        normal = DB.XYZ.BasisY
+
+    if not existing_points:
+        return candidate
+
+    for i in range(max_tries):
+        conflict = False
+        for p in existing_points:
+            if point_distance_xy(candidate, p) < min_dist_ft:
+                conflict = True
+                break
+
+        if not conflict:
+            return candidate
+
+        # Zig-zag paieška aplink pradinį tašką
+        shift_idx = (i // 2) + 1
+        sign = 1 if (i % 2 == 0) else -1
+        candidate = base_point + normal * (step_ft * shift_idx * sign)
+
+    return candidate
+
+
+def parse_float(value):
+    if value is None:
+        return None
+    txt = str(value).strip().replace(',', '.')
+    if not txt:
+        return None
+    try:
+        return float(txt)
+    except Exception:
+        return None
+
+
+def get_first_number(text):
+    if not text:
+        return None
+    txt = str(text).replace(',', '.')
+    m = re.search(r'[-+]?\d*\.?\d+', txt)
+    if not m:
+        return None
+    try:
+        return float(m.group(0))
+    except Exception:
+        return None
+
 
 def get_element_size(elem):
     """Pabando rasti elemento diametrą ar išmatavimą."""
     for p in elem.Parameters:
-        if p.Definition.Name == "Size" or p.Definition.Name == "Dydis":
-            val = p.AsValueString()
-            if val: return val
-            val = p.AsString()
-            if val: return val
+        try:
+            name = p.Definition.Name
+            if name == "Size" or name == "Dydis":
+                val = p.AsValueString()
+                if val:
+                    return val
+                val = p.AsString()
+                if val:
+                    return val
+        except Exception:
+            pass
     return "UnknownSize"
+
 
 def get_element_system_name(elem):
     """Pabando rasti elemento sistemos pavadinimą."""
-    sys_param = elem.get_Parameter(DB.BuiltInParameter.RBS_SYSTEM_NAME_PARAM)
-    if sys_param:
-        val = sys_param.AsString()
-        if val: return val
+    try:
+        sys_param = elem.get_Parameter(DB.BuiltInParameter.RBS_SYSTEM_NAME_PARAM)
+        if sys_param:
+            val = sys_param.AsString()
+            if val:
+                return val
+    except Exception:
+        pass
     return "UnknownSystem"
+
+
+def get_element_flow_value(elem):
+    """Bando gauti debito reikšmę pagal rodomus projekto vienetus."""
+    # Pirmiausia pagal dažniausius parametrų vardus
+    candidate_names = [
+        "Flow", "Air Flow", "Srautas", "Debitas", "Flow Rate"
+    ]
+
+    for p in elem.Parameters:
+        try:
+            name = p.Definition.Name
+            if name in candidate_names:
+                # Prioritetas – pagal žmogui matomą reikšmę
+                val_str = p.AsValueString()
+                num = get_first_number(val_str)
+                if num is not None:
+                    return num
+
+                # Fallback į raw double
+                if p.StorageType == DB.StorageType.Double:
+                    return p.AsDouble()
+        except Exception:
+            pass
+
+    # Bandymas per BuiltInParameter (jei yra)
+    for bip in [
+        DB.BuiltInParameter.RBS_PIPE_FLOW_PARAM,
+        DB.BuiltInParameter.RBS_DUCT_FLOW_PARAM
+    ]:
+        try:
+            p = elem.get_Parameter(bip)
+            if p:
+                val_str = p.AsValueString()
+                num = get_first_number(val_str)
+                if num is not None:
+                    return num
+                if p.StorageType == DB.StorageType.Double:
+                    return p.AsDouble()
+        except Exception:
+            pass
+
+    return None
+
+
+def passes_conditional_filters(elem, system_filter_text, min_flow):
+    if system_filter_text:
+        sys_name = get_element_system_name(elem).lower()
+        if system_filter_text.lower() not in sys_name:
+            return False
+
+    if min_flow is not None:
+        flow = get_element_flow_value(elem)
+        if flow is None or flow < min_flow:
+            return False
+
+    return True
+
+
+def try_add_multi_leaders(tag, follower_elements):
+    """Bando pridėti multi-leader nuorodas prie vieno tago."""
+    if not follower_elements:
+        return 0
+
+    added = 0
+
+    for follower in follower_elements:
+        ref = None
+        try:
+            ref = DB.Reference(follower)
+        except Exception:
+            ref = None
+
+        if ref is None:
+            continue
+
+        try:
+            if hasattr(tag, 'AddReference'):
+                tag.AddReference(ref)
+                added += 1
+                continue
+        except Exception:
+            pass
+
+        try:
+            if hasattr(tag, 'AddReferences'):
+                from System.Collections.Generic import List
+                refs = List[DB.Reference]()
+                refs.Add(ref)
+                tag.AddReferences(refs)
+                added += 1
+                continue
+        except Exception:
+            pass
+
+    return added
+
+
+def set_tag_parallel_rotation(tag, direction, tag_point):
+    if not direction:
+        return
+
+    try:
+        angle = math.atan2(direction.Y, direction.X)
+        if angle > math.pi / 2:
+            angle -= math.pi
+        elif angle < -math.pi / 2:
+            angle += math.pi
+
+        # 1) Bandymas per Rotation
+        if hasattr(tag, 'Rotation'):
+            try:
+                tag.Rotation = angle
+            except Exception:
+                pass
+
+        # 2) Fizinis pasukimas
+        try:
+            axis = DB.Line.CreateBound(tag_point, tag_point + DB.XYZ.BasisZ)
+            DB.ElementTransformUtils.RotateElement(doc, tag.Id, axis, angle)
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+
+
+def align_tag_heads(tags, align_mode):
+    """Sulygiuoja tagų galvučių taškus horizontaliai arba vertikaliai."""
+    if not tags or len(tags) < 2:
+        return 0
+
+    pts = []
+    for tag in tags:
+        try:
+            if hasattr(tag, 'TagHeadPosition'):
+                pts.append((tag, tag.TagHeadPosition))
+        except Exception:
+            pass
+
+    if len(pts) < 2:
+        return 0
+
+    moved = 0
+
+    if align_mode == "Horizontaliai":
+        avg_y = sum([p[1].Y for p in pts]) / float(len(pts))
+        for tag, p in pts:
+            try:
+                tag.TagHeadPosition = DB.XYZ(p.X, avg_y, p.Z)
+                moved += 1
+            except Exception:
+                pass
+
+    elif align_mode == "Vertikaliai":
+        avg_x = sum([p[1].X for p in pts]) / float(len(pts))
+        for tag, p in pts:
+            try:
+                tag.TagHeadPosition = DB.XYZ(avg_x, p.Y, p.Z)
+                moved += 1
+            except Exception:
+                pass
+
+    return moved
+
 
 def auto_tag_mep():
     selected_ids = uidoc.Selection.GetElementIds()
-    
+
     # --- 0. KATEGORIJŲ PASIRINKIMAS ---
     cat_map = {
         "Vamzdžiai (Pipes)": DB.BuiltInCategory.OST_PipeCurves,
@@ -54,9 +318,10 @@ def auto_tag_mep():
         title="1. Ką norite žymėti? (Pasirinkite vieną ar kelis)",
         multiselect=True
     )
-    if not selected_cat_names: return
+    if not selected_cat_names:
+        return
     categories = [cat_map[name] for name in selected_cat_names]
-    
+
     # --- 0.1 TAGŲ TIPŲ PASIRINKIMAS ---
     tag_cat_map = {
         DB.BuiltInCategory.OST_PipeCurves: DB.BuiltInCategory.OST_PipeTags,
@@ -64,18 +329,19 @@ def auto_tag_mep():
         DB.BuiltInCategory.OST_CableTray: DB.BuiltInCategory.OST_CableTrayTags,
         DB.BuiltInCategory.OST_MechanicalEquipment: DB.BuiltInCategory.OST_MechanicalEquipmentTags
     }
-    
-    tag_types_to_use = {} # elem_category_int -> tag_type_id
+
+    tag_types_to_use = {}  # elem_category_int -> tag_type_id
     for cat_name in selected_cat_names:
         cat_enum = cat_map[cat_name]
         tag_enum = tag_cat_map.get(cat_enum)
-        if not tag_enum: continue
-        
+        if not tag_enum:
+            continue
+
         tag_symbols = DB.FilteredElementCollector(doc) \
                         .OfCategory(tag_enum) \
                         .OfClass(DB.FamilySymbol) \
                         .ToElements()
-                        
+
         if tag_symbols:
             options = {}
             for s in tag_symbols:
@@ -94,41 +360,98 @@ def auto_tag_mep():
             if chosen_tag_name:
                 tag_types_to_use[int(cat_enum)] = options[chosen_tag_name]
 
+    # --- 0.2 IŠPLĖSTINĖS FUNKCIJOS (4 pasiūlymai) ---
+    enhancement_options = [
+        "Apsauga nuo tagų susikirtimų",
+        "Tagų lygiavimas",
+        "Vienas tagas grupei (multi-leader, jei palaikoma)",
+        "Sąlyginis žymėjimas (sistema/debitas)"
+    ]
+    chosen_enhancements = forms.SelectFromList.show(
+        enhancement_options,
+        title="Papildomos funkcijos (pasirinkite vieną ar kelias)",
+        multiselect=True
+    ) or []
+
+    use_collision_avoidance = "Apsauga nuo tagų susikirtimų" in chosen_enhancements
+    use_alignment = "Tagų lygiavimas" in chosen_enhancements
+    use_multi_leader_mode = "Vienas tagas grupei (multi-leader, jei palaikoma)" in chosen_enhancements
+    use_conditional_filter = "Sąlyginis žymėjimas (sistema/debitas)" in chosen_enhancements
+
+    align_mode = None
+    if use_alignment:
+        align_mode = forms.CommandSwitchWindow.show(
+            ["Horizontaliai", "Vertikaliai", "Ne"],
+            message="Kaip sulygiuoti tagus po sužymėjimo?"
+        )
+        if align_mode == "Ne":
+            align_mode = None
+
+    system_filter_text = ""
+    min_flow = None
+    if use_conditional_filter:
+        system_filter_text = forms.ask_for_string(
+            default="",
+            prompt="Sistemos filtro tekstas (pvz. CHW, VENT). Tuščia = be filtro:",
+            title="Sąlyginis žymėjimas: sistema"
+        ) or ""
+
+        min_flow_input = forms.ask_for_string(
+            default="",
+            prompt="Minimalus debitas (pagal projekto rodomus vienetus). Tuščia = be debito filtro:",
+            title="Sąlyginis žymėjimas: debitas"
+        )
+        if min_flow_input:
+            min_flow = parse_float(min_flow_input)
+            if min_flow is None:
+                forms.alert("Neteisingas minimalaus debito formatas. Debito filtras nebus taikomas.")
+
     # --- 1. APIMTIS (Scope) ---
     scope_options = ["Visus matomus vaizde", "Tik dabar pažymėtus"]
     if selected_ids:
-        scope = forms.CommandSwitchWindow.show(scope_options, message="Ką žymėsime? (Yra pažymėtų elementų: {})".format(len(selected_ids)))
+        scope = forms.CommandSwitchWindow.show(
+            scope_options,
+            message="Ką žymėsime? (Yra pažymėtų elementų: {})".format(len(selected_ids))
+        )
     else:
         scope = "Visus matomus vaizde"
-    if not scope: return
+    if not scope:
+        return
 
     # --- 2. LYGIUOTĖ (Orientation) ---
     orientation = forms.CommandSwitchWindow.show(
         ["Lygiagrečiai vamzdžiui/ortakiui", "Horizontaliai lapui"],
         message="Kaip orientuoti tagą?"
     )
-    if not orientation: return
+    if not orientation:
+        return
 
     # --- 3. POSLINKIS (Offset) ---
     offset_choice = forms.CommandSwitchWindow.show(
         ["Be poslinkio (centre)", "Atitraukti į šoną (Offset)"],
         message="Kur padėti tagą?"
     )
-    if not offset_choice: return
+    if not offset_choice:
+        return
 
     # --- 4. DUBLIKATAI ---
     duplicate_choice = forms.CommandSwitchWindow.show(
         ["Praleisti jau turinčius tagą", "Žymėti visus (ir dubliuoti)"],
         message="Ką daryti su elementais, kurie JAU turi tagą šiame vaizde?"
     )
-    if not duplicate_choice: return
+    if not duplicate_choice:
+        return
 
     # --- 5. STRATEGIJA ---
     strategy_choice = forms.CommandSwitchWindow.show(
         ["Išmanus: 1 tagas ištisai trasai", "Paprastas: žymėti visus segmentus"],
-        message="Išmanus rėžimas sugrupuoja tos pačios sistemos ir to paties dydžio vamzdžius ir uždeda tik 1 tagą ant ilgiausios atkarpos. Taip išvengiama makalynės."
+        message=(
+            "Išmanus rėžimas sugrupuoja tos pačios sistemos ir to paties dydžio "
+            "vamzdžius ir uždeda tik 1 tagą ant ilgiausios atkarpos."
+        )
     )
-    if not strategy_choice: return
+    if not strategy_choice:
+        return
 
     # --- 6. ILGIO FILTRAS (Minimum Length) ---
     min_length_input = forms.ask_for_string(
@@ -136,23 +459,21 @@ def auto_tag_mep():
         prompt="Įveskite minimalų ilgį metrais (m), nuo kurio žymėti elementus (pvz., 0.5, 1, 2). Trumpesni bus ignoruojami:",
         title="Minimalus ilgis"
     )
-    
+
     min_length_ft = 0.0
     if min_length_input:
         try:
-            # Konvertuojame įvestus metrus į pėdas (Revit API naudoja pėdas)
             min_length_m = float(min_length_input.replace(',', '.'))
-            min_length_ft = min_length_m * 1000 / 304.8
+            min_length_ft = min_length_m * 1000.0 / 304.8
         except ValueError:
             forms.alert("Neteisingas skaičiaus formatas. Bus žymimi visi ilgiai.")
-            
+
     # Surenkame elementus
     from System.Collections.Generic import List
-    
-    # Paverčiame Python sąrašą į .NET C# List, kurio reikalauja Revit API
+
     cat_list = List[DB.BuiltInCategory](categories)
     filter_categories = DB.ElementMulticategoryFilter(cat_list)
-    
+
     elements = []
     if scope == "Tik dabar pažymėtus" and selected_ids:
         cat_ids = [int(c) for c in categories]
@@ -171,23 +492,32 @@ def auto_tag_mep():
         return
 
     tagged_ids = get_existing_tagged_ids() if duplicate_choice == "Praleisti jau turinčius tagą" else set()
-    
+
     # Praleidžiame jau pažymėtus
     elements_to_process = [e for e in elements if e.Id.IntegerValue not in tagged_ids]
 
-    # Jei pasirinktas Išmanus rėžimas, filtruojame tik ilgiausius elementus pagal Sistemą + Dydį
+    # Sąlyginiai filtrai
+    if use_conditional_filter:
+        filtered = []
+        for e in elements_to_process:
+            if passes_conditional_filters(e, system_filter_text, min_flow):
+                filtered.append(e)
+        elements_to_process = filtered
+
+    # Jei pasirinktas Išmanus rėžimas, filtruojame tik ilgiausius pagal Sistema + Dydis
     if "Išmanus" in strategy_choice:
         groups = {}
         for e in elements_to_process:
             sys_name = get_element_system_name(e)
             size_name = get_element_size(e)
-            key = "{}_{}".format(sys_name, size_name)
+            cat_name = str(e.Category.Id.IntegerValue) if e.Category else "None"
+            key = "{}_{}_{}".format(sys_name, size_name, cat_name)
             if key not in groups:
                 groups[key] = []
             groups[key].append(e)
-            
+
         smart_elements = []
-        for key, elems in groups.items():
+        for _key, elems in groups.items():
             longest_elem = None
             max_len = -1
             for e in elems:
@@ -198,7 +528,6 @@ def auto_tag_mep():
                         max_len = length
                         longest_elem = e
                 elif isinstance(loc, DB.LocationPoint):
-                    # Įrenginiams priskiriame prioritetą, tiesiog imame pirmą
                     if max_len < 0:
                         longest_elem = e
                         max_len = 0
@@ -206,100 +535,176 @@ def auto_tag_mep():
                 smart_elements.append(longest_elem)
         elements_to_process = smart_elements
 
+    # Multi-leader režimui papildomai sugrupuojame elementus, kad vienam tagui turėti sekėjus
+    grouped_units = []
+    if use_multi_leader_mode:
+        grouped = {}
+        for e in elements_to_process:
+            sys_name = get_element_system_name(e)
+            size_name = get_element_size(e)
+            cat_name = str(e.Category.Id.IntegerValue) if e.Category else "None"
+            key = "{}_{}_{}".format(sys_name, size_name, cat_name)
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(e)
+
+        for _key, elems in grouped.items():
+            anchor = None
+            max_len = -1
+            followers = []
+
+            for e in elems:
+                loc = e.Location
+                this_len = 0.0
+                if isinstance(loc, DB.LocationCurve):
+                    this_len = loc.Curve.Length
+                if anchor is None or this_len > max_len:
+                    if anchor is not None:
+                        followers.append(anchor)
+                    anchor = e
+                    max_len = this_len
+                else:
+                    followers.append(e)
+
+            if anchor:
+                grouped_units.append((anchor, followers))
+    else:
+        for e in elements_to_process:
+            grouped_units.append((e, []))
+
     tag_orient_enum = DB.TagOrientation.Horizontal
-    offset_dist = 200 / 304.8 
-    
+    offset_dist = 200.0 / 304.8
+
     tagged_count = 0
+    skipped_short = 0
+    leader_links_added = 0
+    warnings = []
+    created_tags = []
+
+    existing_tag_points = get_existing_tag_head_points() if use_collision_avoidance else []
+    min_collision_dist_ft = 350.0 / 304.8  # ~350 mm
+    collision_step_ft = 180.0 / 304.8      # ~180 mm
 
     with revit.Transaction("Išmanus MEP Taginimas"):
-        for elem in elements_to_process:
+        for anchor_elem, followers in grouped_units:
             try:
-                location = elem.Location
-                curve = None
+                location = anchor_elem.Location
                 direction = None
-                
+
                 if isinstance(location, DB.LocationCurve):
                     curve = location.Curve
-                    
-                    # Filtruojame pagal minimalų ilgį (įrenginiams netaikoma)
+
+                    # Filtruojame pagal minimalų ilgį (linijiniams elementams)
                     if curve.Length < min_length_ft:
+                        skipped_short += 1
                         continue
-                        
+
                     midpoint = curve.Evaluate(0.5, True)
                     direction = (curve.GetEndPoint(1) - curve.GetEndPoint(0)).Normalize()
                 elif isinstance(location, DB.LocationPoint):
                     midpoint = location.Point
-                    # Įrenginių atveju bandome gauti jų pasukimo kryptį (FacingOrientation)
-                    if hasattr(elem, "FacingOrientation"):
-                        direction = elem.FacingOrientation
+                    if hasattr(anchor_elem, "FacingOrientation"):
+                        direction = anchor_elem.FacingOrientation
                     else:
                         direction = DB.XYZ.BasisX
                 else:
-                    continue # Jei neturi nei kreivės nei taško, praleidžiame
-                    
+                    continue
+
                 tag_point = midpoint
                 if offset_choice == "Atitraukti į šoną (Offset)" and direction:
                     up_vector = DB.XYZ.BasisZ
-                    normal = direction.CrossProduct(up_vector).Normalize()
+                    normal = direction.CrossProduct(up_vector)
+                    try:
+                        normal = normal.Normalize()
+                    except Exception:
+                        normal = DB.XYZ.BasisY
                     tag_point = midpoint + normal * offset_dist
 
-                ref = DB.Reference(elem)
+                if use_collision_avoidance:
+                    tag_point = choose_non_overlapping_point(
+                        tag_point,
+                        direction,
+                        existing_tag_points,
+                        collision_step_ft,
+                        min_collision_dist_ft,
+                        12
+                    )
+
+                ref = DB.Reference(anchor_elem)
                 tag = DB.IndependentTag.Create(
-                    doc, 
-                    active_view.Id, 
-                    ref, 
-                    False, 
-                    DB.TagMode.TM_ADDBY_CATEGORY, 
-                    tag_orient_enum, 
+                    doc,
+                    active_view.Id,
+                    ref,
+                    False,
+                    DB.TagMode.TM_ADDBY_CATEGORY,
+                    tag_orient_enum,
                     tag_point
                 )
-                
+
                 # Pakeičiame Tago tipą į vartotojo pasirinktą
-                if elem.Category:
-                    cat_int = elem.Category.Id.IntegerValue
+                if anchor_elem.Category:
+                    cat_int = anchor_elem.Category.Id.IntegerValue
                     if cat_int in tag_types_to_use:
                         try:
                             tag.ChangeTypeId(tag_types_to_use[cat_int])
-                        except:
+                        except Exception:
                             pass
-                
-                if orientation == "Lygiagrečiai vamzdžiui/ortakiui" and direction:
-                    try:
-                        # Pasukimo kampo skaičiavimas
-                        angle = math.atan2(direction.Y, direction.X)
-                        if angle > math.pi / 2:
-                            angle -= math.pi
-                        elif angle < -math.pi / 2:
-                            angle += math.pi
-                            
-                        # Metodas 1: Priverstinai bandome nustatyti TagOrientation į Model (Enum reikšmė 2 Revit 2022+)
-                        import System
-                        try:
-                            tag.TagOrientation = System.Enum.ToObject(DB.TagOrientation, 2)
-                        except:
-                            pass
-                            
-                        # Metodas 2: Jei versija labai nauja ir tag.Rotation veikia
-                        if hasattr(tag, 'Rotation'):
-                            try:
-                                tag.Rotation = angle
-                            except:
-                                pass
-                                
-                        # Metodas 3: Fiziškai pasukame visą Tag elementą su ElementTransformUtils
-                        try:
-                            axis = DB.Line.CreateBound(tag_point, tag_point + DB.XYZ.BasisZ)
-                            DB.ElementTransformUtils.RotateElement(doc, tag.Id, axis, angle)
-                        except:
-                            pass
-                    except:
-                        pass 
-                        
-                tagged_count += 1
-            except Exception as e:
-                pass
 
-    forms.alert("Sužymėta trasų/elementų: {}".format(tagged_count))
+                # Lygiagretus pasukimas
+                if orientation == "Lygiagrečiai vamzdžiui/ortakiui" and direction:
+                    set_tag_parallel_rotation(tag, direction, tag_point)
+
+                # Bandome multi-leader
+                if use_multi_leader_mode and followers:
+                    try:
+                        if hasattr(tag, 'HasLeader'):
+                            tag.HasLeader = True
+                    except Exception:
+                        pass
+
+                    added = try_add_multi_leaders(tag, followers)
+                    leader_links_added += added
+                    if added < len(followers):
+                        warnings.append(
+                            "Nepavyko pridėti visų leader nuorodų grupei ({} iš {}).".format(added, len(followers))
+                        )
+
+                tagged_count += 1
+                created_tags.append(tag)
+
+                if use_collision_avoidance:
+                    try:
+                        if hasattr(tag, 'TagHeadPosition'):
+                            existing_tag_points.append(tag.TagHeadPosition)
+                        else:
+                            existing_tag_points.append(tag_point)
+                    except Exception:
+                        existing_tag_points.append(tag_point)
+
+            except Exception as ex:
+                warnings.append("Elemento žymėjimo klaida: {}".format(ex))
+
+        # Tagų lygiavimas po sukūrimo
+        aligned_count = 0
+        if use_alignment and align_mode:
+            aligned_count = align_tag_heads(created_tags, align_mode)
+
+    summary_lines = [
+        "Sužymėta elementų/grupių: {}".format(tagged_count),
+        "Praleista dėl minimalaus ilgio: {}".format(skipped_short)
+    ]
+
+    if use_multi_leader_mode:
+        summary_lines.append("Pridėta multi-leader nuorodų: {}".format(leader_links_added))
+
+    if use_alignment and align_mode:
+        summary_lines.append("Sulygiuota tagų: {} ({})".format(aligned_count, align_mode))
+
+    if warnings:
+        summary_lines.append("Įspėjimų: {}".format(len(warnings)))
+
+    forms.alert("\n".join(summary_lines))
+
 
 if __name__ == '__main__':
     auto_tag_mep()
