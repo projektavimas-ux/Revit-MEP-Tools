@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Išmanus MEP elementų žymėjimas (AutoTag) su išplėstinėmis opcijomis."""
 from pyrevit import revit, DB, forms
+import os
+import json
 import math
 import re
 
@@ -8,6 +10,43 @@ import re
 doc = revit.doc
 uidoc = revit.uidoc
 active_view = doc.ActiveView
+RULES_FILE = os.path.join(os.path.dirname(__file__), 'system_tag_rules.json')
+
+
+def load_system_tag_rules():
+    if not os.path.exists(RULES_FILE):
+        return []
+    try:
+        with open(RULES_FILE, 'r') as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except Exception:
+        pass
+    return []
+
+
+def get_rule_based_tag_id(category_name, system_name, tag_options_for_category, active_rules):
+    if (not category_name) or (not tag_options_for_category) or (not active_rules):
+        return None
+
+    sys_txt = (system_name or '').lower()
+
+    for r in active_rules:
+        r_cat = r.get('category', '')
+        if r_cat != category_name:
+            continue
+
+        token = (r.get('system_contains', '*') or '*').strip()
+        if token != '*':
+            if token.lower() not in sys_txt:
+                continue
+
+        tag_name = r.get('tag_name', '')
+        if tag_name in tag_options_for_category:
+            return tag_options_for_category[tag_name]
+
+    return None
 
 
 def get_existing_tagged_ids():
@@ -360,6 +399,7 @@ def auto_tag_mep():
     if not selected_cat_names:
         return
     categories = [cat_map[name] for name in selected_cat_names]
+    cat_int_to_name = dict((int(v), k) for k, v in cat_map.items())
 
     # --- 0.1 TAGŲ TIPŲ PASIRINKIMAS ---
     tag_cat_map = {
@@ -370,6 +410,7 @@ def auto_tag_mep():
     }
 
     tag_types_to_use = {}  # elem_category_int -> tag_type_id
+    tag_options_by_category_name = {}  # category_name -> {"Family - Type": ElementId}
     for cat_name in selected_cat_names:
         cat_enum = cat_map[cat_name]
         tag_enum = tag_cat_map.get(cat_enum)
@@ -390,6 +431,8 @@ def auto_tag_mep():
                     options["{} - {}".format(fam_name, type_name)] = s.Id
                 except Exception:
                     pass
+
+            tag_options_by_category_name[cat_name] = options
 
             chosen_tag_name = forms.SelectFromList.show(
                 list(options.keys()),
@@ -414,6 +457,18 @@ def auto_tag_mep():
     use_collision_avoidance = "Apsauga nuo tagų susikirtimų" in chosen_enhancements
     use_multi_leader_mode = "Vienas tagas grupei (multi-leader; dažn. ortakiai/kabelių loviai, vamzdžiams gali neveikti)" in chosen_enhancements
     use_conditional_filter = "Sąlyginis žymėjimas (sistema/debitas)" in chosen_enhancements
+
+    # --- 0.3 System -> Tag taisyklės (nebūtina) ---
+    loaded_rules = load_system_tag_rules()
+    active_rules = [r for r in loaded_rules if r.get('enabled', True)]
+    active_rules = sorted(active_rules, key=lambda x: int(x.get('priority', 0)), reverse=True)
+    use_system_rules = False
+    if active_rules:
+        decision = forms.CommandSwitchWindow.show(
+            ["Taip", "Ne"],
+            message="Rastos aktyvios System->Tag taisyklės ({}). Ar taikyti automatinį tag parinkimą pagal sistemą?".format(len(active_rules))
+        )
+        use_system_rules = decision == "Taip"
 
     system_filter_text = ""
     min_flow = None
@@ -606,6 +661,7 @@ def auto_tag_mep():
     tagged_count = 0
     skipped_short = 0
     leader_links_added = 0
+    rules_applied_count = 0
     warnings = []
     created_tags = []
     moved_collision_tags = []
@@ -672,10 +728,29 @@ def auto_tag_mep():
                     tag_point
                 )
 
-                # Pakeičiame Tago tipą į vartotojo pasirinktą
+                # Pakeičiame Tago tipą pagal taisykles arba vartotojo pasirinkimą
                 if anchor_elem.Category:
                     cat_int = anchor_elem.Category.Id.IntegerValue
-                    if cat_int in tag_types_to_use:
+                    tag_type_set = False
+
+                    if use_system_rules:
+                        cat_name_for_rule = cat_int_to_name.get(cat_int)
+                        system_name_for_rule = get_element_system_name(anchor_elem)
+                        rule_tag_id = get_rule_based_tag_id(
+                            cat_name_for_rule,
+                            system_name_for_rule,
+                            tag_options_by_category_name.get(cat_name_for_rule, {}),
+                            active_rules
+                        )
+                        if rule_tag_id:
+                            try:
+                                tag.ChangeTypeId(rule_tag_id)
+                                rules_applied_count += 1
+                                tag_type_set = True
+                            except Exception:
+                                pass
+
+                    if (not tag_type_set) and (cat_int in tag_types_to_use):
                         try:
                             tag.ChangeTypeId(tag_types_to_use[cat_int])
                         except Exception:
@@ -741,6 +816,9 @@ def auto_tag_mep():
 
     if use_multi_leader_mode:
         summary_lines.append("Pridėta multi-leader nuorodų: {}".format(leader_links_added))
+
+    if use_system_rules:
+        summary_lines.append("System->Tag taisyklių pritaikyta: {}".format(rules_applied_count))
 
     if use_collision_avoidance and moved_collision_tags:
         summary_lines.append(

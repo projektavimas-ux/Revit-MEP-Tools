@@ -28,6 +28,17 @@ AlignTags
 - Kada naudoti: kai vaizde tagai išsibarstę po rankinių pataisymų.
 """,
 
+    u"TagRules": u"""
+TagRules
+- Paskirtis: valdyti System -> Tag taisykles AutoTag įrankiui.
+- Ką gali:
+  • Peržiūrėti taisykles
+  • Pridėti naują taisyklę (kategorija + sistemos tekstas + tag tipas + prioritetas)
+  • Ištrinti taisyklę
+  • Įjungti/išjungti taisyklę (ON/OFF)
+- Kada naudoti: kai skirtingoms sistemoms reikia skirtingų tag tipų.
+""",
+
     u"AutoSheet": u"""
 AutoSheet / AutoView MEP (v1)
 - Paskirtis: generuoti view + sheet paketus pagal aukštus/sistemas/zonas.
