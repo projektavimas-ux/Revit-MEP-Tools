@@ -140,7 +140,7 @@ def get_element_system_name(elem):
 
 
 def get_element_flow_value(elem):
-    """Bando gauti debito reikšmę pagal rodomus projekto vienetus."""
+    """Bando gauti debito reikšmę tik pagal rodomus projekto vienetus."""
     # Pirmiausia pagal dažniausius parametrų vardus
     candidate_names = [
         "Flow", "Air Flow", "Srautas", "Debitas", "Flow Rate"
@@ -150,15 +150,10 @@ def get_element_flow_value(elem):
         try:
             name = p.Definition.Name
             if name in candidate_names:
-                # Prioritetas – pagal žmogui matomą reikšmę
                 val_str = p.AsValueString()
                 num = get_first_number(val_str)
                 if num is not None:
                     return num
-
-                # Fallback į raw double
-                if p.StorageType == DB.StorageType.Double:
-                    return p.AsDouble()
         except Exception:
             pass
 
@@ -174,8 +169,6 @@ def get_element_flow_value(elem):
                 num = get_first_number(val_str)
                 if num is not None:
                     return num
-                if p.StorageType == DB.StorageType.Double:
-                    return p.AsDouble()
         except Exception:
             pass
 
@@ -246,14 +239,14 @@ def set_tag_parallel_rotation(tag, direction, tag_point):
         elif angle < -math.pi / 2:
             angle += math.pi
 
-        # 1) Bandymas per Rotation
+        # Bandome VIENĄ metodą, kad išvengtume dvigubo pasukimo.
         if hasattr(tag, 'Rotation'):
             try:
                 tag.Rotation = angle
+                return
             except Exception:
                 pass
 
-        # 2) Fizinis pasukimas
         try:
             axis = DB.Line.CreateBound(tag_point, tag_point + DB.XYZ.BasisZ)
             DB.ElementTransformUtils.RotateElement(doc, tag.Id, axis, angle)
