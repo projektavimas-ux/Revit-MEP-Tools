@@ -296,6 +296,52 @@ def align_tag_heads(tags, align_mode):
     return moved
 
 
+def refine_moved_tags_collision(moved_tag_entries, min_dist_ft, step_ft, max_tries=12):
+    """Antras susikirtimų prevencijos ciklas tik pajudintiems tagams."""
+    if not moved_tag_entries:
+        return 0
+
+    all_points = []
+    for t, _dir in moved_tag_entries:
+        try:
+            if hasattr(t, 'TagHeadPosition') and t.TagHeadPosition:
+                all_points.append(t.TagHeadPosition)
+        except Exception:
+            pass
+
+    adjusted = 0
+    for tag, direction in moved_tag_entries:
+        try:
+            if not hasattr(tag, 'TagHeadPosition'):
+                continue
+
+            current = tag.TagHeadPosition
+            if not current:
+                continue
+
+            # Nevertiname savo paties taško kaip kliūties
+            other_points = [p for p in all_points if point_distance_xy(p, current) > 1e-6]
+
+            new_point = choose_non_overlapping_point(
+                current,
+                direction,
+                other_points,
+                step_ft,
+                min_dist_ft,
+                max_tries
+            )
+
+            if point_distance_xy(new_point, current) > 1e-6:
+                tag.TagHeadPosition = new_point
+                adjusted += 1
+                all_points = [p for p in all_points if point_distance_xy(p, current) > 1e-6]
+                all_points.append(new_point)
+        except Exception:
+            pass
+
+    return adjusted
+
+
 def auto_tag_mep():
     selected_ids = uidoc.Selection.GetElementIds()
 
@@ -573,6 +619,7 @@ def auto_tag_mep():
     leader_links_added = 0
     warnings = []
     created_tags = []
+    moved_collision_tags = []
 
     existing_tag_points = get_existing_tag_head_points() if use_collision_avoidance else []
     min_collision_dist_ft = 350.0 / 304.8  # ~350 mm
@@ -613,6 +660,8 @@ def auto_tag_mep():
                         normal = DB.XYZ.BasisY
                     tag_point = midpoint + normal * offset_dist
 
+                requested_tag_point = tag_point
+
                 if use_collision_avoidance:
                     tag_point = choose_non_overlapping_point(
                         tag_point,
@@ -646,6 +695,15 @@ def auto_tag_mep():
                 # Lygiagretus pasukimas
                 if orientation == "Lygiagrečiai vamzdžiui/ortakiui" and direction:
                     set_tag_parallel_rotation(tag, direction, tag_point)
+
+                # Jei tagas buvo patrauktas dėl susikirtimo, įjungiam Leader
+                if use_collision_avoidance and point_distance_xy(tag_point, requested_tag_point) > 1e-6:
+                    try:
+                        if hasattr(tag, 'HasLeader'):
+                            tag.HasLeader = True
+                    except Exception:
+                        pass
+                    moved_collision_tags.append((tag, direction))
 
                 # Bandome multi-leader
                 if use_multi_leader_mode and followers:
@@ -682,6 +740,16 @@ def auto_tag_mep():
         if use_alignment and align_mode:
             aligned_count = align_tag_heads(created_tags, align_mode)
 
+        # Antras susikirtimų prevencijos ciklas tik pajudintiems tagams
+        collision_refined_count = 0
+        if use_collision_avoidance and moved_collision_tags:
+            collision_refined_count = refine_moved_tags_collision(
+                moved_collision_tags,
+                min_collision_dist_ft,
+                collision_step_ft,
+                12
+            )
+
     summary_lines = [
         "Sužymėta elementų/grupių: {}".format(tagged_count),
         "Praleista dėl minimalaus ilgio: {}".format(skipped_short)
@@ -693,8 +761,22 @@ def auto_tag_mep():
     if use_alignment and align_mode:
         summary_lines.append("Sulygiuota tagų: {} ({})".format(aligned_count, align_mode))
 
+    if use_collision_avoidance and moved_collision_tags:
+        summary_lines.append(
+            "Pajudintiems tagams įjungtas Leader: {} | pakoreguota antru ciklu: {}".format(
+                len(moved_collision_tags),
+                collision_refined_count
+            )
+        )
+
     if warnings:
         summary_lines.append("Įspėjimų: {}".format(len(warnings)))
+
+    if use_multi_leader_mode:
+        summary_lines.append(
+            "Pastaba: 'Vienas tagas grupei' dažniausiai veikia ortakiams, kabelių loviams ir daliai įrenginių; "
+            "vamzdžiams Revit API dažnai nepalaiko pilno AddReference scenarijaus."
+        )
 
     forms.alert("\n".join(summary_lines))
 
