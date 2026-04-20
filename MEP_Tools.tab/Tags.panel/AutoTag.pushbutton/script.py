@@ -402,7 +402,6 @@ def auto_tag_mep():
     # --- 0.2 IŠPLĖSTINĖS FUNKCIJOS (4 pasiūlymai) ---
     enhancement_options = [
         "Apsauga nuo tagų susikirtimų",
-        "Tagų lygiavimas",
         "Vienas tagas grupei (multi-leader, jei palaikoma)",
         "Sąlyginis žymėjimas (sistema/debitas)"
     ]
@@ -413,18 +412,8 @@ def auto_tag_mep():
     ) or []
 
     use_collision_avoidance = "Apsauga nuo tagų susikirtimų" in chosen_enhancements
-    use_alignment = "Tagų lygiavimas" in chosen_enhancements
     use_multi_leader_mode = "Vienas tagas grupei (multi-leader, jei palaikoma)" in chosen_enhancements
     use_conditional_filter = "Sąlyginis žymėjimas (sistema/debitas)" in chosen_enhancements
-
-    align_mode = None
-    if use_alignment:
-        align_mode = forms.CommandSwitchWindow.show(
-            ["Horizontaliai", "Vertikaliai", "Ne"],
-            message="Kaip sulygiuoti tagus po sužymėjimo?"
-        )
-        if align_mode == "Ne":
-            align_mode = None
 
     system_filter_text = ""
     min_flow = None
@@ -735,11 +724,6 @@ def auto_tag_mep():
             except Exception as ex:
                 warnings.append("Elemento žymėjimo klaida: {}".format(ex))
 
-        # Tagų lygiavimas po sukūrimo
-        aligned_count = 0
-        if use_alignment and align_mode:
-            aligned_count = align_tag_heads(created_tags, align_mode)
-
         # Antras susikirtimų prevencijos ciklas tik pajudintiems tagams
         collision_refined_count = 0
         if use_collision_avoidance and moved_collision_tags:
@@ -757,9 +741,6 @@ def auto_tag_mep():
 
     if use_multi_leader_mode:
         summary_lines.append("Pridėta multi-leader nuorodų: {}".format(leader_links_added))
-
-    if use_alignment and align_mode:
-        summary_lines.append("Sulygiuota tagų: {} ({})".format(aligned_count, align_mode))
 
     if use_collision_avoidance and moved_collision_tags:
         summary_lines.append(
