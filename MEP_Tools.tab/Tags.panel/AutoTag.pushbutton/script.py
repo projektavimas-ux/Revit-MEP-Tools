@@ -664,7 +664,8 @@ def auto_tag_mep():
         for e in elements_to_process:
             grouped_units.append((e, []))
 
-    tag_orient_enum = DB.TagOrientation.Horizontal
+    is_3d_view = getattr(active_view, 'ViewType', None) == DB.ViewType.ThreeD
+    tag_orient_enum = DB.TagOrientation.AnyModelDirection if is_3d_view else DB.TagOrientation.Horizontal
     offset_dist = 200.0 / 304.8
 
     tagged_count = 0
@@ -727,15 +728,25 @@ def auto_tag_mep():
                     )
 
                 ref = DB.Reference(anchor_elem)
-                tag = DB.IndependentTag.Create(
-                    doc,
-                    active_view.Id,
-                    ref,
-                    False,
-                    DB.TagMode.TM_ADDBY_CATEGORY,
-                    tag_orient_enum,
-                    tag_point
-                )
+                tag = None
+                for orient in [tag_orient_enum, DB.TagOrientation.Horizontal, DB.TagOrientation.AnyModelDirection]:
+                    if tag is not None:
+                        break
+                    try:
+                        tag = DB.IndependentTag.Create(
+                            doc,
+                            active_view.Id,
+                            ref,
+                            False,
+                            DB.TagMode.TM_ADDBY_CATEGORY,
+                            orient,
+                            tag_point
+                        )
+                    except Exception:
+                        tag = None
+
+                if tag is None:
+                    raise Exception("Nepavyko sukurti tag šiame vaide (tikėtina orientacijos / view apribojimas).")
 
                 # Pakeičiame Tago tipą pagal taisykles arba vartotojo pasirinkimą
                 if anchor_elem.Category:

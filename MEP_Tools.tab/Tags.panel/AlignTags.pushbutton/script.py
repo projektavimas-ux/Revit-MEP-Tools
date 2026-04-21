@@ -8,10 +8,19 @@ doc = revit.doc
 uidoc = revit.uidoc
 
 
+class TagOnlySelectionFilter(UISelection.ISelectionFilter):
+    def AllowElement(self, element):
+        return isinstance(element, DB.IndependentTag)
+
+    def AllowReference(self, reference, point):
+        return False
+
+
 def pick_tags_interactively():
     try:
         picked = uidoc.Selection.PickObjects(
             UISelection.ObjectType.Element,
+            TagOnlySelectionFilter(),
             "Pažymėk bent 2 tagus lygiavimui ir spausk Finish"
         )
     except Exception:
@@ -40,8 +49,10 @@ def align_tags(tags, mode):
     moved = 0
     failed = 0
 
+    first_pt = pts[0][1]
+
     if mode == "Horizontaliai":
-        target_y = sum([p[1].Y for p in pts]) / float(len(pts))
+        target_y = first_pt.Y
         for tag, p in pts:
             try:
                 tag.TagHeadPosition = DB.XYZ(p.X, target_y, p.Z)
@@ -50,7 +61,7 @@ def align_tags(tags, mode):
                 failed += 1
 
     elif mode == "Vertikaliai":
-        target_x = sum([p[1].X for p in pts]) / float(len(pts))
+        target_x = first_pt.X
         for tag, p in pts:
             try:
                 tag.TagHeadPosition = DB.XYZ(target_x, p.Y, p.Z)
