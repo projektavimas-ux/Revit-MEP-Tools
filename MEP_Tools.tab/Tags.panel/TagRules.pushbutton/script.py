@@ -97,6 +97,37 @@ def show_rules():
     forms.alert(u"\n".join(lines))
 
 
+def manage_enabled_rules_checklist():
+    rules = load_rules()
+    if not rules:
+        forms.alert(u"Taisyklių nėra.")
+        return
+
+    labels = [rule_label(r) for r in rules]
+
+    selected_enabled = forms.SelectFromList.show(
+        labels,
+        title=u"Pažymėkite taisykles, kurios turi būti ĮJUNGTOS",
+        multiselect=True,
+        button_name=u"Išsaugoti ON/OFF"
+    )
+    if selected_enabled is None:
+        return
+
+    selected_enabled = set(selected_enabled)
+    changed = 0
+    for r in rules:
+        lbl = rule_label(r)
+        new_state = lbl in selected_enabled
+        old_state = r.get('enabled', True)
+        if bool(old_state) != bool(new_state):
+            changed += 1
+        r['enabled'] = new_state
+
+    save_rules(rules)
+    forms.alert(u"Taisyklių ON/OFF atnaujinta. Pakeista: {}".format(changed))
+
+
 def add_rule():
     cat_name = forms.SelectFromList.show(
         sorted(CATEGORY_TO_BIC.keys()),
@@ -204,7 +235,7 @@ def clear_rules():
 
 def main():
     action = forms.CommandSwitchWindow.show(
-        [u"Peržiūrėti", u"Pridėti", u"Ištrinti", u"ON/OFF", u"Išvalyti visas"],
+        [u"Peržiūrėti", u"Pridėti", u"Ištrinti", u"ON/OFF", u"ON/OFF (varnelės)", u"Išvalyti visas"],
         message=u"Tag Rules valdymas"
     )
     if not action:
@@ -218,6 +249,8 @@ def main():
         delete_rule()
     elif action == u"ON/OFF":
         toggle_rule_enabled()
+    elif action == u"ON/OFF (varnelės)":
+        manage_enabled_rules_checklist()
     elif action == u"Išvalyti visas":
         clear_rules()
 

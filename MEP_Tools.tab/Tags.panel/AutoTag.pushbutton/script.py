@@ -434,11 +434,14 @@ def auto_tag_mep():
 
             tag_options_by_category_name[cat_name] = options
 
+            tag_choice_items = [u"❌ Atšaukti viską"] + sorted(list(options.keys()))
             chosen_tag_name = forms.SelectFromList.show(
-                list(options.keys()),
+                tag_choice_items,
                 title="Pasirinkite Tag tipą: {}".format(cat_name),
                 multiselect=False
             )
+            if chosen_tag_name == u"❌ Atšaukti viską":
+                return
             if chosen_tag_name:
                 tag_types_to_use[int(cat_enum)] = options[chosen_tag_name]
 
@@ -448,11 +451,15 @@ def auto_tag_mep():
         "Vienas tagas grupei (multi-leader; dažn. ortakiai/kabelių loviai, vamzdžiams gali neveikti)",
         "Sąlyginis žymėjimas (sistema/debitas)"
     ]
+    enhancement_choice_items = enhancement_options + ["❌ Atšaukti viską"]
     chosen_enhancements = forms.SelectFromList.show(
-        enhancement_options,
+        enhancement_choice_items,
         title="Papildomos funkcijos (pasirinkite vieną ar kelias)",
         multiselect=True
     ) or []
+
+    if "❌ Atšaukti viską" in chosen_enhancements:
+        return
 
     use_collision_avoidance = "Apsauga nuo tagų susikirtimų" in chosen_enhancements
     use_multi_leader_mode = "Vienas tagas grupei (multi-leader; dažn. ortakiai/kabelių loviai, vamzdžiams gali neveikti)" in chosen_enhancements
@@ -463,12 +470,6 @@ def auto_tag_mep():
     active_rules = [r for r in loaded_rules if r.get('enabled', True)]
     active_rules = sorted(active_rules, key=lambda x: int(x.get('priority', 0)), reverse=True)
     use_system_rules = False
-    if active_rules:
-        decision = forms.CommandSwitchWindow.show(
-            ["Taip", "Ne"],
-            message="Rastos aktyvios System->Tag taisyklės ({}). Ar taikyti automatinį tag parinkimą pagal sistemą?".format(len(active_rules))
-        )
-        use_system_rules = decision == "Taip"
 
     system_filter_text = ""
     min_flow = None
@@ -573,6 +574,14 @@ def auto_tag_mep():
     if not elements:
         forms.alert("Nerasta tinkamų MEP elementų žymėjimui.")
         return
+
+    # Klausimas dėl sukurtų taisyklių naudojimo - PO taginamų elementų pasirinkimo
+    if active_rules:
+        decision = forms.CommandSwitchWindow.show(
+            ["Taip", "Ne"],
+            message="Rastos aktyvios System->Tag taisyklės ({}). Ar taikyti automatinį tag parinkimą pagal sistemą?".format(len(active_rules))
+        )
+        use_system_rules = decision == "Taip"
 
     tagged_ids = get_existing_tagged_ids() if duplicate_choice == "Praleisti jau turinčius tagą" else set()
 
