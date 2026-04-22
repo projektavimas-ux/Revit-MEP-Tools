@@ -34,6 +34,16 @@ def pick_tags_interactively():
     return tags
 
 
+def _normalize_mode(mode):
+    if not mode:
+        return ""
+
+    m = mode.strip().lower()
+    # Supaprastintas diakritikų suvienodinimas patikimam palyginimui
+    m = m.replace("ė", "e").replace("ę", "e").replace("š", "s").replace("ž", "z")
+    return m
+
+
 def align_tags(tags, mode):
     pts = []
     for tag in tags:
@@ -50,17 +60,10 @@ def align_tags(tags, mode):
     failed = 0
 
     first_pt = pts[0][1]
+    mode_key = _normalize_mode(mode)
 
-    if mode == "Horizontaliai":
-        target_y = first_pt.Y
-        for tag, p in pts:
-            try:
-                tag.TagHeadPosition = DB.XYZ(p.X, target_y, p.Z)
-                moved += 1
-            except Exception:
-                failed += 1
-
-    elif mode == "Vertikaliai":
+    # Testuotojų terminija: „Horizontaliai“ -> vienodas X, „Vertikaliai“ -> vienodas Y
+    if "horiz" in mode_key:
         target_x = first_pt.X
         for tag, p in pts:
             try:
@@ -69,7 +72,16 @@ def align_tags(tags, mode):
             except Exception:
                 failed += 1
 
-    elif mode == "Prie kairės":
+    elif "vert" in mode_key:
+        target_y = first_pt.Y
+        for tag, p in pts:
+            try:
+                tag.TagHeadPosition = DB.XYZ(p.X, target_y, p.Z)
+                moved += 1
+            except Exception:
+                failed += 1
+
+    elif "kaire" in mode_key:
         target_x = min([p[1].X for p in pts])
         for tag, p in pts:
             try:
@@ -78,7 +90,7 @@ def align_tags(tags, mode):
             except Exception:
                 failed += 1
 
-    elif mode == "Prie dešinės":
+    elif "desine" in mode_key:
         target_x = max([p[1].X for p in pts])
         for tag, p in pts:
             try:
@@ -86,6 +98,9 @@ def align_tags(tags, mode):
                 moved += 1
             except Exception:
                 failed += 1
+
+    else:
+        failed = len(pts)
 
     return moved, failed
 
