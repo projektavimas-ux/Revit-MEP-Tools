@@ -108,8 +108,15 @@ AutoSection
 
     u"AutoDim": u"""
 AutoDim
-- Paskirtis: automatinis matmenų dėjimas pagal taisykles.
-- Naudojimas: kai reikia paspartinti pasikartojančių matmenų žymėjimą.
+- Paskirtis: automatinis matmenų dėjimas pagal discipliną ir grandinėlės tipą.
+- Paleidimo metu leidžia pasirinkti:
+  • discipliną (MEP / ARCH / STR)
+  • kryptį (X / Y / X+Y)
+  • grandinėlės tipą (Grandinėlė / Kraštiniai / Grandinėlė + Kraštiniai)
+  • ar inkaruoti grandinėlę į artimiausias ašis (Grid)
+  • matmens stilių (DimensionType)
+- Kada naudoti: kai skirtingoms disciplinoms reikia skirtingos matmenavimo logikos,
+  bet vieno bendro AutoDim įrankio.
 """
 }
 
