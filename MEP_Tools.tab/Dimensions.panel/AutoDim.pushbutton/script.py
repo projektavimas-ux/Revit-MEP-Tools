@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Automatinis matmenų dėjimas pagal discipliną ir grandinėlės tipą."""
 from pyrevit import revit, DB, forms
+import System
 
 
 doc = revit.doc
@@ -33,7 +34,18 @@ DISCIPLINE_CATEGORIES = {
         _safe_get_bic("OST_Doors"),
         _safe_get_bic("OST_Windows"),
         _safe_get_bic("OST_Columns"),
+        _safe_get_bic("OST_StructuralColumns"),
         _safe_get_bic("OST_Floors"),
+        _safe_get_bic("OST_Roofs"),
+        _safe_get_bic("OST_GenericModel"),
+        _safe_get_bic("OST_CurtainWallPanels"),
+        _safe_get_bic("OST_CurtainWallMullions"),
+        _safe_get_bic("OST_Stairs"),
+        _safe_get_bic("OST_Ramps"),
+        _safe_get_bic("OST_Parking"),
+        _safe_get_bic("OST_Casework"),
+        _safe_get_bic("OST_Furniture"),
+        _safe_get_bic("OST_SpecialityEquipment"),
     ],
     "STR": [
         _safe_get_bic("OST_StructuralColumns"),
@@ -153,7 +165,45 @@ def collect_elements_for_discipline(discipline):
         except Exception:
             pass
 
+    # ARCH naudotojai dažnai paleidžia įrankį vaizduose, kur nėra tipinių sienų/langų,
+    # bet yra kitų architektūrinių modelių. Jei po kategorijų filtro nieko nerasta,
+    # dar bandome surinkti FamilyInstance pagal kategorijas, kurios kai kuriose Revit
+    # versijose / šeimose grįžta ne per OfCategory kelią taip patikimai.
+    if discipline == "ARCH" and not elements:
+        try:
+            fams = (DB.FilteredElementCollector(doc, view.Id)
+                    .OfClass(DB.FamilyInstance)
+                    .WhereElementIsNotElementType()
+                    .ToElements())
+            allowed = set([c for c in categories if c is not None])
+            for el in fams:
+                try:
+                    cat = el.Category
+                    if cat is None:
+                        continue
+                    bic = System.Enum.ToObject(DB.BuiltInCategory, cat.Id.IntegerValue)
+                    if bic in allowed and el.Id.IntegerValue > 0:
+                        elements[el.Id.IntegerValue] = el
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     return list(elements.values())
+
+
+def collect_elements_any_discipline(exclude=None):
+    merged = {}
+    for disc_name in ["MEP", "ARCH", "STR"]:
+        if exclude and disc_name == exclude:
+            continue
+        for el in collect_elements_for_discipline(disc_name):
+            try:
+                if el and el.Id.IntegerValue > 0:
+                    merged[el.Id.IntegerValue] = el
+            except Exception:
+                pass
+    return list(merged.values())
 
 
 def get_element_point(el):
@@ -491,10 +541,26 @@ def main():
 
     dim_type = pick_dimension_type()
 
+    notes = []
     elements = collect_elements_for_discipline(discipline)
     if not elements:
-        forms.alert("Aktyviame vaizde nerasta disciplinos elementų: {}".format(discipline))
-        return
+        fallback = collect_elements_any_discipline(exclude=discipline)
+        if fallback:
+            use_fallback = forms.alert(
+                "Aktyviame vaizde nerasta disciplinos elementų: {}.\n\n"
+                "Tačiau rasta kitų disciplinų elementų ({} vnt.).\n"
+                "Ar tęsti su jais?".format(discipline, len(fallback)),
+                yes=True,
+                no=True
+            )
+            if use_fallback:
+                elements = fallback
+                notes = [u"Naudoti kitų disciplinų elementai (fallback)."]
+            else:
+                return
+        else:
+            forms.alert("Aktyviame vaizde nerasta disciplinos elementų: {}".format(discipline))
+            return
 
     targets = []
     for el in elements:
@@ -520,7 +586,6 @@ def main():
 
     created = 0
     failed = 0
-    notes = []
 
     with revit.Transaction("AutoDim | {} | {}".format(discipline, chain_mode)):
         for axis in axes:
