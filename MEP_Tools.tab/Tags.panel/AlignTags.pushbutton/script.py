@@ -44,6 +44,16 @@ def _normalize_mode(mode):
     return m
 
 
+def _get_bbox_x_bounds(tag):
+    try:
+        bb = tag.get_BoundingBox(doc.ActiveView)
+        if bb:
+            return bb.Min.X, bb.Max.X
+    except Exception:
+        pass
+    return None, None
+
+
 def align_tags(tags, mode):
     pts = []
     for tag in tags:
@@ -62,17 +72,8 @@ def align_tags(tags, mode):
     first_pt = pts[0][1]
     mode_key = _normalize_mode(mode)
 
-    # Testuotojų terminija: „Horizontaliai“ -> vienodas X, „Vertikaliai“ -> vienodas Y
+    # Standartinė semantika: Horizontaliai -> vienodas Y, Vertikaliai -> vienodas X
     if "horiz" in mode_key:
-        target_x = first_pt.X
-        for tag, p in pts:
-            try:
-                tag.TagHeadPosition = DB.XYZ(target_x, p.Y, p.Z)
-                moved += 1
-            except Exception:
-                failed += 1
-
-    elif "vert" in mode_key:
         target_y = first_pt.Y
         for tag, p in pts:
             try:
@@ -81,8 +82,8 @@ def align_tags(tags, mode):
             except Exception:
                 failed += 1
 
-    elif "kaire" in mode_key:
-        target_x = min([p[1].X for p in pts])
+    elif "vert" in mode_key:
+        target_x = first_pt.X
         for tag, p in pts:
             try:
                 tag.TagHeadPosition = DB.XYZ(target_x, p.Y, p.Z)
@@ -90,11 +91,38 @@ def align_tags(tags, mode):
             except Exception:
                 failed += 1
 
-    elif "desine" in mode_key:
-        target_x = max([p[1].X for p in pts])
+    elif "kaire" in mode_key:
+        bounds = []
         for tag, p in pts:
+            min_x, max_x = _get_bbox_x_bounds(tag)
+            if min_x is None:
+                min_x = p.X
+                max_x = p.X
+            bounds.append((tag, p, min_x, max_x))
+
+        target_left = min([b[2] for b in bounds])
+        for tag, p, min_x, _ in bounds:
             try:
-                tag.TagHeadPosition = DB.XYZ(target_x, p.Y, p.Z)
+                dx = target_left - min_x
+                tag.TagHeadPosition = DB.XYZ(p.X + dx, p.Y, p.Z)
+                moved += 1
+            except Exception:
+                failed += 1
+
+    elif "desine" in mode_key:
+        bounds = []
+        for tag, p in pts:
+            min_x, max_x = _get_bbox_x_bounds(tag)
+            if max_x is None:
+                min_x = p.X
+                max_x = p.X
+            bounds.append((tag, p, min_x, max_x))
+
+        target_right = max([b[3] for b in bounds])
+        for tag, p, _, max_x in bounds:
+            try:
+                dx = target_right - max_x
+                tag.TagHeadPosition = DB.XYZ(p.X + dx, p.Y, p.Z)
                 moved += 1
             except Exception:
                 failed += 1
