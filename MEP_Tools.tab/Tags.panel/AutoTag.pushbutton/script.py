@@ -228,23 +228,63 @@ def passes_conditional_filters(elem, system_filter_text, min_flow):
     return True
 
 
+def _build_tag_reference(elem):
+    ref = None
+    try:
+        ref = DB.Reference(elem)
+    except Exception:
+        ref = None
+
+    if ref is not None:
+        return ref
+
+    # Kai kuriems linijiniams elementams (pvz., ortakiams) patikimiau veikia kreivės reference
+    try:
+        loc = elem.Location
+        if isinstance(loc, DB.LocationCurve) and loc.Curve and hasattr(loc.Curve, 'Reference'):
+            return loc.Curve.Reference
+    except Exception:
+        pass
+
+    return None
+
+
 def try_add_multi_leaders(tag, follower_elements):
     """Bando pridėti multi-leader nuorodas prie vieno tago."""
     if not follower_elements:
         return 0
 
+    refs_to_add = []
+    for follower in follower_elements:
+        ref = _build_tag_reference(follower)
+        if ref is not None:
+            refs_to_add.append(ref)
+
+    if not refs_to_add:
+        return 0
+
     added = 0
 
-    for follower in follower_elements:
-        ref = None
-        try:
-            ref = DB.Reference(follower)
-        except Exception:
-            ref = None
+    try:
+        if hasattr(tag, 'MultiLeader'):
+            tag.MultiLeader = True
+    except Exception:
+        pass
 
-        if ref is None:
-            continue
+    # 1) Pirmiausia bandome pridėti visus iš karto (kai kurios Revit versijos to reikalauja)
+    try:
+        if hasattr(tag, 'AddReferences'):
+            from System.Collections.Generic import List
+            refs = List[DB.Reference]()
+            for r in refs_to_add:
+                refs.Add(r)
+            tag.AddReferences(refs)
+            return len(refs_to_add)
+    except Exception:
+        pass
 
+    # 2) Fallback: po vieną reference
+    for ref in refs_to_add:
         try:
             if hasattr(tag, 'AddReference'):
                 tag.AddReference(ref)
