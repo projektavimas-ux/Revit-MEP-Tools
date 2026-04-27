@@ -228,25 +228,60 @@ def passes_conditional_filters(elem, system_filter_text, min_flow):
     return True
 
 
-def _build_tag_reference(elem):
-    ref = None
+def _extract_reference_from_geometry(elem):
     try:
-        ref = DB.Reference(elem)
-    except Exception:
-        ref = None
+        opts = DB.Options()
+        opts.ComputeReferences = True
+        geom = elem.get_Geometry(opts)
+        if not geom:
+            return None
 
-    if ref is not None:
-        return ref
+        for g in geom:
+            # Tiesioginė geometrija
+            try:
+                if hasattr(g, 'Reference') and g.Reference is not None:
+                    return g.Reference
+            except Exception:
+                pass
 
-    # Kai kuriems linijiniams elementams (pvz., ortakiams) patikimiau veikia kreivės reference
-    try:
-        loc = elem.Location
-        if isinstance(loc, DB.LocationCurve) and loc.Curve and hasattr(loc.Curve, 'Reference'):
-            return loc.Curve.Reference
+            # Geometrija GeometryInstance viduje
+            try:
+                if isinstance(g, DB.GeometryInstance):
+                    inst_geom = g.GetInstanceGeometry()
+                    for ig in inst_geom:
+                        if hasattr(ig, 'Reference') and ig.Reference is not None:
+                            return ig.Reference
+            except Exception:
+                pass
     except Exception:
         pass
 
     return None
+
+
+def _build_tag_reference(elem):
+    ref = None
+
+    # 1) Dažniausias kelias
+    try:
+        ref = DB.Reference(elem)
+    except Exception:
+        ref = None
+    if ref is not None:
+        return ref
+
+    # 2) Linijinių elementų (pvz., ortakių) kreivė
+    try:
+        loc = elem.Location
+        if isinstance(loc, DB.LocationCurve) and loc.Curve and hasattr(loc.Curve, 'Reference'):
+            ref = loc.Curve.Reference
+            if ref is not None:
+                return ref
+    except Exception:
+        pass
+
+    # 3) Geometrijos reference su ComputeReferences
+    return _extract_reference_from_geometry(elem)
 
 
 def try_add_multi_leaders(tag, follower_elements):
@@ -255,15 +290,38 @@ def try_add_multi_leaders(tag, follower_elements):
         return 0
 
     refs_to_add = []
+    seen_ids = set()
     for follower in follower_elements:
+        try:
+            fid = follower.Id.IntegerValue
+        except Exception:
+            fid = None
+
+        if fid is not None and fid in seen_ids:
+            continue
+
         ref = _build_tag_reference(follower)
         if ref is not None:
             refs_to_add.append(ref)
+            if fid is not None:
+                seen_ids.add(fid)
 
     if not refs_to_add:
         return 0
 
     added = 0
+
+    try:
+        if hasattr(tag, 'HasLeader'):
+            tag.HasLeader = True
+    except Exception:
+        pass
+
+    try:
+        if hasattr(tag, 'LeaderEndCondition'):
+            tag.LeaderEndCondition = DB.LeaderEndCondition.Free
+    except Exception:
+        pass
 
     try:
         if hasattr(tag, 'MultiLeader'):

@@ -45,12 +45,22 @@ def _normalize_mode(mode):
 
 
 def _get_bbox_x_bounds(tag):
-    try:
-        bb = tag.get_BoundingBox(doc.ActiveView)
-        if bb:
-            return bb.Min.X, bb.Max.X
-    except Exception:
-        pass
+    # Bandome kelis būdus, nes skirtingose Revit versijose veikia nevienodai
+    for view in (doc.ActiveView, None):
+        try:
+            bb = tag.get_BoundingBox(view)
+            if bb:
+                return bb.Min.X, bb.Max.X
+        except Exception:
+            pass
+
+        try:
+            bb = tag.BoundingBox[view]
+            if bb:
+                return bb.Min.X, bb.Max.X
+        except Exception:
+            pass
+
     return None, None
 
 
@@ -72,17 +82,8 @@ def align_tags(tags, mode):
     first_pt = pts[0][1]
     mode_key = _normalize_mode(mode)
 
-    # Standartinė semantika: Horizontaliai -> vienodas Y, Vertikaliai -> vienodas X
+    # Testuotojų semantika: Horizontaliai -> ta pati X, Vertikaliai -> ta pati Y
     if "horiz" in mode_key:
-        target_y = first_pt.Y
-        for tag, p in pts:
-            try:
-                tag.TagHeadPosition = DB.XYZ(p.X, target_y, p.Z)
-                moved += 1
-            except Exception:
-                failed += 1
-
-    elif "vert" in mode_key:
         target_x = first_pt.X
         for tag, p in pts:
             try:
@@ -91,14 +92,31 @@ def align_tags(tags, mode):
             except Exception:
                 failed += 1
 
+    elif "vert" in mode_key:
+        target_y = first_pt.Y
+        for tag, p in pts:
+            try:
+                tag.TagHeadPosition = DB.XYZ(p.X, target_y, p.Z)
+                moved += 1
+            except Exception:
+                failed += 1
+
     elif "kaire" in mode_key:
+        try:
+            doc.Regenerate()
+        except Exception:
+            pass
+
         bounds = []
         for tag, p in pts:
             min_x, max_x = _get_bbox_x_bounds(tag)
-            if min_x is None:
-                min_x = p.X
-                max_x = p.X
+            if min_x is None or max_x is None:
+                failed += 1
+                continue
             bounds.append((tag, p, min_x, max_x))
+
+        if not bounds:
+            return moved, failed
 
         target_left = min([b[2] for b in bounds])
         for tag, p, min_x, _ in bounds:
@@ -110,13 +128,21 @@ def align_tags(tags, mode):
                 failed += 1
 
     elif "desine" in mode_key:
+        try:
+            doc.Regenerate()
+        except Exception:
+            pass
+
         bounds = []
         for tag, p in pts:
             min_x, max_x = _get_bbox_x_bounds(tag)
-            if max_x is None:
-                min_x = p.X
-                max_x = p.X
+            if min_x is None or max_x is None:
+                failed += 1
+                continue
             bounds.append((tag, p, min_x, max_x))
+
+        if not bounds:
+            return moved, failed
 
         target_right = max([b[3] for b in bounds])
         for tag, p, _, max_x in bounds:
