@@ -546,20 +546,10 @@ def main():
     if not elements:
         fallback = collect_elements_any_discipline(exclude=discipline)
         if fallback:
-            use_fallback = forms.alert(
-                "Aktyviame vaizde nerasta disciplinos elementų: {}.\n\n"
-                "Tačiau rasta kitų disciplinų elementų ({} vnt.).\n"
-                "Ar tęsti su jais?".format(discipline, len(fallback)),
-                yes=True,
-                no=True
-            )
-            if use_fallback:
-                elements = fallback
-                notes = [u"Naudoti kitų disciplinų elementai (fallback)."]
-            else:
-                return
+            elements = fallback
+            notes = [u"Tavo disciplinos elementų nerasta; panaudoti kitų disciplinų elementai (auto-fallback)."]
         else:
-            forms.alert("Aktyviame vaizde nerasta disciplinos elementų: {}".format(discipline))
+            forms.alert("Aktyviame vaizde nerasta tinkamų elementų nei {} disciplinai, nei fallback režimui.".format(discipline))
             return
 
     targets = []
